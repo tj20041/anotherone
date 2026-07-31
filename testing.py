@@ -36,6 +36,9 @@ df_transformed.show()
 print("\nSummary Statistics:")
 df.select("salary").describe().show()
 
+# Add this to cause a division by zero error
+df = df.withColumn("error_col", col("salary") / 0)  # This will break it
+
 # Save as temp view for SQL queries
 df.createOrReplaceTempView("employees")
 
