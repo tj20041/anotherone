@@ -1,50 +1,32 @@
-# databricks_script.py - Working Databricks Script
+# databricks_script_with_error.py - This WILL FAIL
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, upper
+from pyspark.sql.functions import col
 
 # Create Spark session
-spark = SparkSession.builder.appName("SimpleApp").getOrCreate()
+spark = SparkSession.builder.appName("ErrorApp").getOrCreate()
 
 # Create sample data
 print("Creating sample data...")
 data = [
-    (1, "john", "sales", 50000),
-    (2, "jane", "marketing", 60000),
-    (3, "bob", "it", 70000),
-    (4, "alice", "hr", 55000)
+    (1, "john", 50000),
+    (2, "jane", 60000),
+    (3, "bob", 70000),
+    (4, "alice", 55000)
 ]
 
 # Create DataFrame
-df = spark.createDataFrame(data, ["id", "name", "department", "salary"])
+df = spark.createDataFrame(data, ["id", "name", "salary"])
 print(f"Created DataFrame with {df.count()} rows")
 
 # Show original data
 print("\nOriginal Data:")
 df.show()
 
-# Simple transformations
-print("\nTransforming data...")
-df_transformed = df.withColumn("name_upper", upper(col("name")))
-df_transformed = df_transformed.withColumn("salary_bonus", col("salary") * 0.10)
+# THIS WILL CAUSE AN ERROR - Division by zero
+print("\n⚠️ About to cause an error...")
+df_error = df.withColumn("error_col", col("salary") / 0)
 
-# Show transformed data
-print("\nTransformed Data:")
-df_transformed.show()
-
-# Calculate summary statistics
-print("\nSummary Statistics:")
-df.select("salary").describe().show()
-
-# Add this to cause a division by zero error
-df = df.withColumn("error_col", col("salary") / 0)  # This will break it
-
-# Save as temp view for SQL queries
-df.createOrReplaceTempView("employees")
-
-# Run SQL query
-print("\nSQL Query Results:")
-sql_result = spark.sql("SELECT department, AVG(salary) as avg_salary FROM employees GROUP BY department")
-sql_result.show()
-
-print("\n✅ Script completed successfully!")
+# This line never runs because the above fails
+print("This will never print")
+df_error.show()
