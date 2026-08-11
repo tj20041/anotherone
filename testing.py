@@ -1,32 +1,16 @@
-# databricks_script_with_error.py - This WILL FAIL
-
+# Script that will cause Py4JJavaError
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+from pyspark.sql.functions import udf
 
-# Create Spark session
-spark = SparkSession.builder.appName("ErrorApp").getOrCreate()
+spark = SparkSession.builder.getOrCreate()
 
-# Create sample data
-print("Creating sample data...")
-data = [
-    (1, "john", 50000),
-    (2, "jane", 60000),
-    (3, "bob", 70000),
-    (4, "alice", 55000)
-]
+# Create a DataFrame
+df = spark.createDataFrame([(1, "A"), (2, "B")], ["id", "letter"])
 
-# Create DataFrame
-df = spark.createDataFrame(data, ["id", "name", "salary"])
-print(f"Created DataFrame with {df.count()} rows")
+# THE ERROR: UDF that references Java object incorrectly
+def bad_udf(x):
+    # This will cause a Py4J error because it tries to access Java object
+    return x.toString()  # Invalid operation on int
 
-# Show original data
-print("\nOriginal Data:")
-df.show()
-
-# THIS WILL CAUSE AN ERROR - Division by zero
-print("\n⚠️ About to cause an error...")
-df_error = df.withColumn("error_col", col("salary") / 0)
-
-# This line never runs because the above fails
-print("This will never print")
-df_error.show()
+bad_udf_spark = udf(bad_udf)
+df.withColumn("bad", bad_udf_spark("id")).show()
