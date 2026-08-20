@@ -30,10 +30,12 @@ try:
         StructField("age", IntegerType(), True)
     ])
 
+    # Schema2 column order standardised to match schema1 (id, name, age)
+    # to ensure consistent positional alignment and prevent future union bugs.
     schema2 = StructType([
+        StructField("id", IntegerType(), True),
         StructField("name", StringType(), True),
-        StructField("age", IntegerType(), True),
-        StructField("id", IntegerType(), True)
+        StructField("age", IntegerType(), True)
     ])
 
     # ==========================================
@@ -46,10 +48,11 @@ try:
         (3, "Charlie", 30)
     ], schema=schema1)
 
+    # Row tuples updated to match standardised schema2 column order (id, name, age).
     df2_bronze = spark.createDataFrame([
-        ("Dave", 22, 4),
-        ("BotAccount", -5, 5),
-        ("Eve", 28, 6)
+        (4, "Dave", 22),
+        (5, "BotAccount", -5),
+        (6, "Eve", 28)
     ], schema=schema2)
 
     # ==========================================
@@ -63,7 +66,25 @@ try:
     # 4. GOLD LAYER (Integration)
     # ==========================================
     logger.info("Integrating Silver tables into Gold layer...")
-    df_gold = df1_silver.union(df2_silver)
+    # Changed from union() to unionByName() to merge columns by name rather
+    # than by position, preventing STRING-to-BIGINT cast failures caused by
+    # differing column declaration orders across schemas.
+    df_gold = df1_silver.unionByName(df2_silver)
+
+    # Post-union schema assertion to catch regressions from future schema drift.
+    expected_columns = ["id", "name", "age"]
+    expected_schema = schema1
+    if df_gold.columns != expected_columns:
+        raise AssertionError(
+            "Gold layer schema mismatch — unexpected column order or names. "
+            "Expected: %s, Got: %s" % (expected_columns, df_gold.columns)
+        )
+    if df_gold.schema != expected_schema:
+        raise AssertionError(
+            "Gold layer schema mismatch — unexpected column types. "
+            "Expected schema: %s, Got schema: %s" % (expected_schema, df_gold.schema)
+        )
+    logger.info("Gold layer schema assertion passed. Columns: %s", df_gold.columns)
 
     logger.info("Pipeline completed successfully.")
     display(df_gold)
