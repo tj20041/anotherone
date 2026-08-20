@@ -59,11 +59,47 @@ try:
     df1_silver = df1_bronze.filter("age >= 0")
     df2_silver = df2_bronze.filter("age >= 0")
 
+    # Pre-union schema compatibility assertion: verify both DataFrames share
+    # the same column names (order-independent) and dtypes before unioning,
+    # so any future schema drift is caught early with a clear message.
+    assert set(df1_silver.columns) == set(df2_silver.columns), (
+        f"Column name mismatch before union: "
+        f"{df1_silver.columns} vs {df2_silver.columns}"
+    )
+    assert set(df1_silver.dtypes) == set(df2_silver.dtypes), (
+        f"Column dtype mismatch before union: "
+        f"{df1_silver.dtypes} vs {df2_silver.dtypes}"
+    )
+
     # ==========================================
     # 4. GOLD LAYER (Integration)
     # ==========================================
-    logger.info("Integrating Silver tables into Gold layer...")
-    df_gold = df1_silver.union(df2_silver)
+    # Use unionByName() instead of union() to align columns by name rather
+    # than by position.  schema1 is (id, name, age) and schema2 is
+    # (name, age, id) — a positional union() would map df2_silver's STRING
+    # 'name' column into df1_silver's INTEGER 'id' slot, causing
+    # SparkNumberFormatException [CAST_INVALID_INPUT] SQLSTATE 22018.
+    logger.info(
+        "Integrating Silver tables into Gold layer using unionByName "
+        "to enforce column alignment..."
+    )
+    df_gold = df1_silver.unionByName(df2_silver)
+
+    # Gold-layer row-count validation: the unified result must contain exactly
+    # as many rows as the two Silver DataFrames combined.
+    expected_count = df1_silver.count() + df2_silver.count()
+    actual_count = df_gold.count()
+    assert actual_count == expected_count, (
+        f"Gold layer row count mismatch: expected {expected_count}, "
+        f"got {actual_count}"
+    )
+    logger.info(
+        "Gold layer row-count validation passed: %d rows (df1_silver=%d, "
+        "df2_silver=%d).",
+        actual_count,
+        df1_silver.count(),
+        df2_silver.count(),
+    )
 
     logger.info("Pipeline completed successfully.")
     display(df_gold)
