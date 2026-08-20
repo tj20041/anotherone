@@ -60,14 +60,38 @@ try:
     df2_silver = df2_bronze.filter("age >= 0")
 
     # ==========================================
+    # 3b. SCHEMA VALIDATION GUARD
+    # ==========================================
+    assert set(df1_silver.columns) == set(df2_silver.columns), (
+        f"Schema mismatch before union: df1_silver columns={df1_silver.columns} "
+        f"vs df2_silver columns={df2_silver.columns}"
+    )
+    logger.info("Schema validation passed: both Silver DataFrames share the same column names.")
+
+    # ==========================================
     # 4. GOLD LAYER (Integration)
     # ==========================================
     logger.info("Integrating Silver tables into Gold layer...")
-    df_gold = df1_silver.union(df2_silver)
+    # FIX: replaced positional union() with unionByName() to align columns by name,
+    # not by position. The original union() caused df2_silver.name (STRING) to be
+    # placed in the df1_silver.id (INTEGER) slot, producing SparkNumberFormatException
+    # CAST_INVALID_INPUT (SQLSTATE 22018) when Spark tried to cast 'Dave'/'Eve' to BIGINT.
+    # allowMissingColumns=True makes the Gold integration robust to partial-schema
+    # upstream additions without requiring a code change each time.
+    df_gold = df1_silver.unionByName(df2_silver, allowMissingColumns=True)
 
     logger.info("Pipeline completed successfully.")
     display(df_gold)
 
 except Exception as e:
     logger.error("Pipeline failed during execution. Error details: %s", str(e))
+    # Log both Silver DataFrame schemas to aid debugging of schema drift
+    try:
+        logger.error("df1_silver schema: %s", df1_silver.schema.simpleString())
+    except Exception:
+        logger.error("df1_silver schema unavailable (DataFrame may not have been created).")
+    try:
+        logger.error("df2_silver schema: %s", df2_silver.schema.simpleString())
+    except Exception:
+        logger.error("df2_silver schema unavailable (DataFrame may not have been created).")
     raise
