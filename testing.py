@@ -30,10 +30,12 @@ try:
         StructField("age", IntegerType(), True)
     ])
 
+    # Reordered schema2 columns to match schema1's positional order (id, name, age)
+    # as a defensive measure so both union() and unionByName() produce correct results.
     schema2 = StructType([
+        StructField("id", IntegerType(), True),
         StructField("name", StringType(), True),
-        StructField("age", IntegerType(), True),
-        StructField("id", IntegerType(), True)
+        StructField("age", IntegerType(), True)
     ])
 
     # ==========================================
@@ -46,10 +48,11 @@ try:
         (3, "Charlie", 30)
     ], schema=schema1)
 
+    # Reordered data tuples to match the corrected schema2 column order (id, name, age)
     df2_bronze = spark.createDataFrame([
-        ("Dave", 22, 4),
-        ("BotAccount", -5, 5),
-        ("Eve", 28, 6)
+        (4, "Dave", 22),
+        (5, "BotAccount", -5),
+        (6, "Eve", 28)
     ], schema=schema2)
 
     # ==========================================
@@ -63,11 +66,28 @@ try:
     # 4. GOLD LAYER (Integration)
     # ==========================================
     logger.info("Integrating Silver tables into Gold layer...")
-    df_gold = df1_silver.union(df2_silver)
+
+    # Schema compatibility assertion: catch column-name mismatches early with a
+    # clear, actionable error rather than a cryptic CAST_INVALID_INPUT from Spark.
+    assert set(df1_silver.columns) == set(df2_silver.columns), (
+        f"Schema mismatch before union: df1={df1_silver.columns}, df2={df2_silver.columns}"
+    )
+
+    # Use unionByName() instead of union() so columns are matched by name rather
+    # than position, preventing STRING-to-BIGINT cast failures when column order
+    # differs between the two DataFrames.
+    df_gold = df1_silver.unionByName(df2_silver)
 
     logger.info("Pipeline completed successfully.")
     display(df_gold)
 
 except Exception as e:
     logger.error("Pipeline failed during execution. Error details: %s", str(e))
+    # Log both DataFrame schemas at failure time to dramatically reduce triage
+    # time if a positional or type mismatch recurs after future schema changes.
+    try:
+        logger.error("df1_silver schema: %s", df1_silver.schema.simpleString())
+        logger.error("df2_silver schema: %s", df2_silver.schema.simpleString())
+    except Exception:
+        logger.error("Could not retrieve DataFrame schemas for diagnostic logging.")
     raise
