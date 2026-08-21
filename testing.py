@@ -59,15 +59,43 @@ try:
     df1_silver = df1_bronze.filter("age >= 0")
     df2_silver = df2_bronze.filter("age >= 0")
 
+    # Log Silver layer row counts for data quality audit trail
+    silver1_count = df1_silver.count()
+    silver2_count = df2_silver.count()
+    logger.info("Silver layer row counts — df1_silver: %d, df2_silver: %d", silver1_count, silver2_count)
+
     # ==========================================
     # 4. GOLD LAYER (Integration)
     # ==========================================
     logger.info("Integrating Silver tables into Gold layer...")
-    df_gold = df1_silver.union(df2_silver)
+
+    # Guard: assert both DataFrames share the same set of column names before
+    # unioning. If schemas diverge in a future change this raises a clear,
+    # descriptive error at validation time rather than a cryptic
+    # CAST_INVALID_INPUT at Spark execution time.
+    assert set(df1_silver.columns) == set(df2_silver.columns), (
+        f"Schema mismatch before union: {df1_silver.columns} vs {df2_silver.columns}"
+    )
+
+    # Fix: use unionByName() instead of union() so that columns are aligned by
+    # NAME rather than by position. union() was mapping df2_silver's StringType
+    # 'name' column into df1_silver's IntegerType 'id' slot (positional slot 0),
+    # causing Spark to attempt a STRING -> BIGINT cast and raising
+    # SparkNumberFormatException CAST_INVALID_INPUT (SQLSTATE 22018).
+    df_gold = df1_silver.unionByName(df2_silver)
+
+    # Guard: confirm the Gold layer was produced correctly before surfacing the
+    # result downstream. Catches silent data loss from overly aggressive filters.
+    gold_count = df_gold.count()
+    assert gold_count > 0, "Gold layer is empty after union — check Silver filters"
+    logger.info("Gold layer row count: %d", gold_count)
 
     logger.info("Pipeline completed successfully.")
     display(df_gold)
 
 except Exception as e:
-    logger.error("Pipeline failed during execution. Error details: %s", str(e))
+    # exc_info=True appends the full traceback to the log entry, which is
+    # captured in the Databricks driver log and cluster event log for faster
+    # diagnosis.
+    logger.error("Pipeline failed during execution. Error details: %s", str(e), exc_info=True)
     raise
