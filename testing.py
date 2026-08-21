@@ -30,10 +30,15 @@ try:
         StructField("age", IntegerType(), True)
     ])
 
+    # Fixed: reordered schema2 column definitions to match schema1's positional
+    # order (id INT, name STRING, age INT) so that union() maps columns correctly
+    # by position. Previously schema2 was (name STRING, age INT, id INT) which
+    # caused Spark to cast STRING name values into INT id positions at execution
+    # time, raising SparkNumberFormatException (CAST_INVALID_INPUT, SQLSTATE 22018).
     schema2 = StructType([
+        StructField("id", IntegerType(), True),
         StructField("name", StringType(), True),
-        StructField("age", IntegerType(), True),
-        StructField("id", IntegerType(), True)
+        StructField("age", IntegerType(), True)
     ])
 
     # ==========================================
@@ -46,10 +51,14 @@ try:
         (3, "Charlie", 30)
     ], schema=schema1)
 
+    # Fixed: reordered inline data tuples for df2_bronze to match the corrected
+    # schema2 column order (id INT, name STRING, age INT). Previously tuples were
+    # in (name, age, id) order matching the old schema2, so values are now
+    # reordered to (id, name, age) to align with the corrected schema.
     df2_bronze = spark.createDataFrame([
-        ("Dave", 22, 4),
-        ("BotAccount", -5, 5),
-        ("Eve", 28, 6)
+        (4, "Dave", 22),
+        (5, "BotAccount", -5),
+        (6, "Eve", 28)
     ], schema=schema2)
 
     # ==========================================
@@ -63,9 +72,30 @@ try:
     # 4. GOLD LAYER (Integration)
     # ==========================================
     logger.info("Integrating Silver tables into Gold layer...")
-    df_gold = df1_silver.union(df2_silver)
 
-    logger.info("Pipeline completed successfully.")
+    # Defensive schema compatibility assertion: fail fast at development/CI time
+    # rather than at Spark execution time if schemas drift in the future.
+    assert df1_silver.schema == df2_silver.schema, (
+        f"Schema mismatch before union: "
+        f"df1={df1_silver.schema}, df2={df2_silver.schema}"
+    )
+
+    # Fixed: replaced bare union() with unionByName() so that columns are aligned
+    # by name rather than ordinal position. This eliminates the entire class of
+    # positional column-order bugs and makes the Gold integration step resilient
+    # to future schema reorderings in either upstream DataFrame.
+    df_gold = df1_silver.unionByName(df2_silver)
+
+    # Post-Gold row count assertion: ensures the Gold DataFrame is not silently
+    # empty after the union before handing off to display() or downstream consumers.
+    gold_count = df_gold.count()
+    expected_count = df1_silver.count() + df2_silver.count()
+    assert gold_count == expected_count, (
+        f"Gold DataFrame row count mismatch: expected {expected_count}, "
+        f"got {gold_count} — aborting pipeline."
+    )
+
+    logger.info("Pipeline completed successfully. Gold row count: %d", gold_count)
     display(df_gold)
 
 except Exception as e:
